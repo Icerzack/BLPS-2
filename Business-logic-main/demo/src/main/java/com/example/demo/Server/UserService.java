@@ -11,7 +11,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.jta.JtaTransactionManager;
 
+import javax.transaction.*;
 import java.util.Optional;
 
 @Service
@@ -22,6 +24,9 @@ public class UserService {
     private PaymentsRepository paymentRepository;
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private JtaTransactionManager transactionManager;
 
     public ResponseEntity<AddPhoneResponse> addPhone(Long id, String phone) {
         AddPhoneResponse addPhoneResponse = new AddPhoneResponse();
@@ -68,7 +73,6 @@ public class UserService {
         return ResponseEntity.ok(deletePhoneResponse);
     }
 
-    @Transactional
     public ResponseEntity<AddPaymentResponse> addPayment(Long userId, String cardNum, String cardDate, String cardCvv) {
         AddPaymentResponse addPaymentResponse = new AddPaymentResponse();
         if(!cardNum.matches("[-+]?\\d+") || cardNum.length() < 13 || cardNum.length() > 19 || !cardCvv.matches("[-+]?\\d+") || cardCvv.length() != 3){
@@ -79,32 +83,57 @@ public class UserService {
         Optional<PaymentsEntity> paymentEntity = paymentRepository.findByCardNum(cardNum);
         Optional<UserPaymentEntity> userPaymentEntity = userPaymentRepository.findByUserId(userId);
 
-        PaymentsEntity newPaymentEntity = new PaymentsEntity();
-        if(!paymentEntity.isPresent()){
-            newPaymentEntity.setCardNum(cardNum);
-            newPaymentEntity.setCardDate(cardDate);
-            newPaymentEntity.setCardCvv(cardCvv);
-            paymentRepository.save(newPaymentEntity);
-        } else {
-            newPaymentEntity = paymentEntity.get();
+        UserTransaction userTransaction = transactionManager.getUserTransaction();
+
+        try {
+            userTransaction.begin();
+        } catch (NotSupportedException | SystemException e) {
+            throw new RuntimeException(e);
+        }
+        try {
+
+            PaymentsEntity newPaymentEntity = new PaymentsEntity();
+            if(!paymentEntity.isPresent()){
+                newPaymentEntity.setCardNum(cardNum);
+                newPaymentEntity.setCardDate(cardDate);
+                newPaymentEntity.setCardCvv(cardCvv);
+                paymentRepository.save(newPaymentEntity);
+            } else {
+                newPaymentEntity = paymentEntity.get();
+            }
+
+            if (userPaymentEntity.isPresent()){
+                userPaymentEntity.get().setPayment(newPaymentEntity);
+                userPaymentRepository.save(userPaymentEntity.get());
+                addPaymentResponse.setResult(true);
+                return ResponseEntity.ok(addPaymentResponse);
+            }
+
+            if (userEntity.isPresent()) {
+                UserPaymentEntity newUserPaymentEntity = new UserPaymentEntity();
+                newUserPaymentEntity.setUser(userEntity.get());
+                newUserPaymentEntity.setPayment(newPaymentEntity);
+                userPaymentRepository.save(newUserPaymentEntity);
+                addPaymentResponse.setResult(true);
+            } else {
+                addPaymentResponse.setResult(false);
+            }
+
+            userTransaction.commit();
+        } catch (Exception e) {
+            // Откатить транзакцию при ошибке
+            try {
+                userTransaction.rollback();
+            } catch (SystemException ex) {
+                throw new RuntimeException(ex);
+            }
+            try {
+                throw e;
+            } catch (RollbackException | SystemException | HeuristicRollbackException | HeuristicMixedException ex) {
+                throw new RuntimeException(ex);
+            }
         }
 
-        if (userPaymentEntity.isPresent()){
-            userPaymentEntity.get().setPayment(newPaymentEntity);
-            userPaymentRepository.save(userPaymentEntity.get());
-            addPaymentResponse.setResult(true);
-            return ResponseEntity.ok(addPaymentResponse);
-        }
-
-        if (userEntity.isPresent()) {
-            UserPaymentEntity newUserPaymentEntity = new UserPaymentEntity();
-            newUserPaymentEntity.setUser(userEntity.get());
-            newUserPaymentEntity.setPayment(newPaymentEntity);
-            userPaymentRepository.save(newUserPaymentEntity);
-            addPaymentResponse.setResult(true);
-        } else {
-            addPaymentResponse.setResult(false);
-        }
         return ResponseEntity.ok(addPaymentResponse);
     }
 

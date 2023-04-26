@@ -2,6 +2,7 @@ package com.example.demo.Config;
 
 import com.atomikos.icatch.jta.UserTransactionManager;
 import com.atomikos.icatch.jta.UserTransactionImp;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.jta.atomikos.AtomikosDataSourceBean;
 import org.springframework.context.annotation.Bean;
@@ -9,8 +10,11 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.transaction.jta.JtaTransactionManager;
 
+import javax.sql.DataSource;
+import javax.sql.XADataSource;
 import javax.transaction.SystemException;
 import java.util.Properties;
+
 
 @Configuration
 @EnableTransactionManagement
@@ -22,11 +26,15 @@ public class JtaConfig {
     @Value("${spring.datasource.password}")
     private String password;
 
+    @Autowired
+    private DataSource dataSource;
 
     @Bean(initMethod = "init", destroyMethod = "close")
     public AtomikosDataSourceBean myDataSource() {
+
         AtomikosDataSourceBean ds = new AtomikosDataSourceBean();
         ds.setUniqueResourceName("postgres");
+        ds.setXaDataSource((XADataSource) dataSource);
         ds.setXaDataSourceClassName("org.postgresql.xa.PGXADataSource");
         Properties p = new Properties();
         p.setProperty ( "user" , username );
